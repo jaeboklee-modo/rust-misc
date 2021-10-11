@@ -1,4 +1,4 @@
-use super::method::Method;
+use super::method::{Method, MethodError};
 use std::convert::TryFrom;
 use std::error::Error;
 use std::str;
@@ -6,19 +6,24 @@ use std::str::Utf8Error;
 // Importing multiple values from same module
 use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 
-pub struct Request {
-    path: String,
-    query_string: Option<String>,
+// request should have longer lifetime than Buffer.
+// lifetime is explicit feat in Rust
+// Generally, we dont have to consider lifetime in other language.
+// The lifetime for request is same for the buffer, so we can name its lifetime 'buf'
+pub struct Request<'buf> {
+    path: &'buf str, //a lifetime
+    query_string: Option<&'buf str>,
     // There is no none or null in Rust, therefore Option enum plays a role for the null
     // Option : Kind of Enum in Rust standard library. Use <> cause it is generic type.
     method: Method,
 }
 
-impl TryFrom<&[u8]> for Request {
+// declare that we will have lifetime name buf.
+impl<'buf> TryFrom<&'buf [u8]> for Request<'buf> {
     type Error = ParseError;
 
     // GET /search?name=abc&sort=1 HTTP/1.1
-    fn try_from(buf: &[u8]) -> Result<Self, Self::Error> {
+    fn try_from(buf: &'buf [u8]) -> Result<Request<'buf>, Self::Error> {
         // match str::from_utf8(buf) {
         //     Ok(request) => {}
         //     Err(_) => return Err(ParseError::InvalidEncoding),
@@ -39,7 +44,7 @@ impl TryFrom<&[u8]> for Request {
         // match get_next_word(request) {
         //     // The first word would be GET, POST ...
         //     Some((method, request)) => {}
-        //     // We have Invalid req in this case.
+        //     // We have Invalid re q in this case.
         //     None => return Err(ParseError::InvalidRequest),
         // }
 
@@ -47,16 +52,49 @@ impl TryFrom<&[u8]> for Request {
         // If some, return Ok, otherwise none, recept Err param and return err.
         // 'request' is assigned agained, which means shadowing above 'request'.
         let (method, request) = get_next_word(request).ok_or(ParseError::InvalidRequest)?;
-        let (path, request) = get_next_word(request).ok_or(ParseError::InvalidRequest)?;
+        let (mut path, request) = get_next_word(request).ok_or(ParseError::InvalidRequest)?;
         let (protocol, _) = get_next_word(request).ok_or(ParseError::InvalidRequest)?;
 
         if protocol != "HTTP/1.1" {
             return Err(ParseError::InvaildProtocol);
         }
-        unimplemented!()
+
+        let method: Method = method.parse()?;
+
+        let mut query_string = None;
+        // match path.find("?") {
+        //     // i + 1 for excluding ? mark.
+        //     // Some => string parse.
+        //     Some(i) => {
+        //         query_string = Some(&path[i + 1..]);
+        //         path = &path[..i];
+        //     }
+        //     None => {} //In this case, None is not necessary
+        // }
+
+        // let q = path.find('?'); //In this case, q is not necessary
+        // if q.is_some() {
+        //     let i = q.unwrap();
+
+        //     query_string = Some(&path[i + 1..]);
+        //     path = &path[..i];
+        // }
+
+        if let Some(i) = path.find('?') {
+            query_string = Some(path[i + 1..]);
+            path = &path[..i];
+        }
+
+        Ok(Self {
+            path,
+            query_string,
+            method,
+        })
     }
 }
 // Option is for when there is no string at the end.
+// In this case, there is no need for explicit lifetime since
+// Option tuple's lifetime would be same as request's
 fn get_next_word(request: &str) -> Option<(&str, &str)> {
     // let mut iter = request.chars();
     // loop {
@@ -96,6 +134,12 @@ impl ParseError {
             Self::InvaildProtocol => "InvaildProtocol",
             Self::InvalidMethod => "InvalidMethod",
         }
+    }
+}
+
+impl From<MethodError> for ParseError {
+    fn from(_: MethodError) -> Self {
+        Self::InvalidMethod
     }
 }
 
